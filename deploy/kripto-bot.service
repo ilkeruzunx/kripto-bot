@@ -1,0 +1,30 @@
+# Ubuntu sunucuda botu sürekli çalıştırmak için systemd servisi.
+#
+# Kurulum (sunucuda, proje /home/bot/kripto-bot içindeyse):
+#   sudo cp deploy/kripto-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now kripto-bot
+#
+# İzleme:
+#   systemctl status kripto-bot
+#   journalctl -u kripto-bot -f
+#   tail -f /home/bot/kripto-bot/logs/bot.log
+#
+# Canlı mod için ExecStart satırının sonuna --canli ekle (config.yaml'da mode: live de olmalı).
+
+[Unit]
+Description=kripto-bot (BtcTurk)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bot
+WorkingDirectory=/home/bot/kripto-bot
+ExecStart=/home/bot/kripto-bot/.venv/bin/python -m bot run
+Restart=on-failure
+RestartSec=30
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

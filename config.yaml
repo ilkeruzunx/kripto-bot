@@ -1,0 +1,66 @@
+# Kripto bot ayarları
+# Yüzdeler "3" = %3 şeklinde yazılır.
+
+# paper: sanal para (gerçek emir GÖNDERMEZ, gerçek fiyatları kullanır)
+# live:  gerçek emir. Ayrıca komutta --canli bayrağı da gerekir.
+mode: paper
+
+exchange: btcturk
+quote: TRY
+
+# Bota ayrılan toplam bütçe (TL). Bot bunun üstüne asla çıkmaz.
+total_budget: 50000
+
+# Komisyon oranı (%, alış ve satış için ayrı ayrı). BtcTurk'teki kendi
+# oranını buraya yaz; emin değilsen yüksek tutmak daha güvenli.
+fee_pct: 0.2
+
+# Ana döngü: fiyatlar kaç saniyede bir kontrol edilsin
+poll_seconds: 60
+
+coins: [BTC, ETH, ETC, XRP, SOL, TRUMP, ZRO, ENA, LAYER, SPK]
+
+# Varsayılan strateji (her coin için geçerli; aşağıda coin bazında değiştirilebilir)
+strategy:
+  timeframe: 1h            # mum aralığı
+
+  # --- Giriş ---
+  rsi_period: 14
+  rsi_below: 40            # RSI bu değerin altına inince ilk alım (null = RSI şartı yok)
+  trend_ema: 200           # fiyat bu EMA'nın üstündeyse al (null = trend şartı yok)
+
+  # --- Kademeli alım ---
+  base_order: 1000         # ilk alım (TL)
+  safety_orders: 3         # en fazla kaç ek alım
+  safety_order: 1000       # ilk ek alım (TL)
+  safety_volume_scale: 1.3 # her ek alım bir öncekinin kaç katı
+  safety_step_pct: 4       # son alımdan bu kadar düşünce ek alım yap
+  safety_step_scale: 1.0   # adımlar büyüsün mü (1.0 = hep aynı)
+
+  # --- Çıkış ---
+  take_profit_pct: 3       # komisyonlar DÜŞÜLDÜKTEN sonraki net kar hedefi
+  trailing_pct: 1.0        # hedefe ulaşınca zirveden bu kadar düşerse sat (0 = hemen sat)
+  stop_loss_pct: 12        # ortalama maliyetin bu kadar altında zararı kes (null = kapalı)
+
+  # --- Bekleme ---
+  cooldown_after_tp_min: 60
+  cooldown_after_sl_min: 1440
+
+# Coin bazında değişiklikler (yalnız değiştirmek istediğin alanları yaz)
+overrides:
+  # Oynak coinlerde daha geniş adım ve stop
+  TRUMP: { safety_step_pct: 6, stop_loss_pct: 18, take_profit_pct: 4 }
+  LAYER: { safety_step_pct: 6, stop_loss_pct: 18, take_profit_pct: 4 }
+  SPK:   { safety_step_pct: 6, stop_loss_pct: 18, take_profit_pct: 4 }
+  ZRO:   { safety_step_pct: 5, stop_loss_pct: 15 }
+  ENA:   { safety_step_pct: 5, stop_loss_pct: 15 }
+
+# Emir ayarları (yalnız canlı modda)
+orders:
+  # Hemen dolması için limit emir fiyatı en iyi fiyattan bu kadar içeride verilir
+  slippage_pct: 0.3
+  # Emir bu kadar saniyede dolmazsa iptal edilir
+  timeout_seconds: 30
+
+# Telegram bildirimi: .env içine TELEGRAM_BOT_TOKEN ve TELEGRAM_CHAT_ID yaz
+telegram: true

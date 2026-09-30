@@ -1,0 +1,11 @@
+.env
+*.pem
+state/
+logs/
+data/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
