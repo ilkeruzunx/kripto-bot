@@ -8,6 +8,29 @@ BtcTurk üzerinde çalışan kademeli alım (DCA) + kar al + zarar durdur botu.
 
 ## Nasıl çalışır?
 
+### 1. Hangi coinler? (tarama)
+
+`config.yaml` → `selection.mode: scan` (varsayılan) iken bot her 24 saatte bir
+BtcTurk'teki **tüm TL paritelerini** tarar:
+
+- **Eler:** 24 saatlik hacmi 20 milyon TL altı, alış-satış farkı %0,3 üstü,
+  30 günden yeni, stabil coin (USDT, USDC…) ve kara listedekiler.
+- **Şart koyar:** fiyat 50 günlük ortalamanın üstünde (yükselen trend), günlük
+  ortalama hareket %1,5–8 arası (ne durgun ne aşırı oynak).
+- **Puanlar:** son 30 ve 7 günde BTC'den ne kadar iyi gittiği (göreli güç).
+- **Seçer:** `coins` listesi (BTC, ETH, SOL, XRP) hep izlenir; kalan yerler
+  (toplam 12) en yüksek puanlılarla dolar.
+
+Aynı anda en fazla **10 pozisyon** açılır (10 × 4.990 = 49.900 TL). Listeden düşen
+bir coinde açık pozisyon varsa zorla satılmaz; kendi kar/stop kuralıyla kapanır.
+Yalnız kendi listenle çalışmak için `selection.mode: fixed` yap.
+
+```bash
+python -m bot scan    # bugün hangi coinler seçilir, hangileri neden elendi
+```
+
+### 2. Al-sat kuralları
+
 Her coin için ayrı ayrı:
 
 1. **İlk alım** — RSI düşükse (varsayılan < 40) ve fiyat 200 saatlik ortalamanın
@@ -21,9 +44,9 @@ Her coin için ayrı ayrı:
    hepsini satar ve 24 saat o coin'e girmez.
 
 Varsayılan ayarlarla her coin'e en fazla 1000 + 1000 + 1300 + 1690 = **4.990 TL**,
-10 coin'e toplam en fazla **49.900 TL** gider. Bot `total_budget` (50.000 TL)
-sınırını asla aşmaz. Oynak coinler (TRUMP, LAYER, SPK, ZRO, ENA) için daha
-geniş adım ve stop ayarlıdır. Hepsi `config.yaml` içinde.
+en fazla 10 açık pozisyonla toplam **49.900 TL** gider. Bot `total_budget` (50.000 TL)
+sınırını asla aşmaz. Oynak coinler (TRUMP, LAYER, SPK, ZRO, ENA) taramayla seçilirse
+onlar için daha geniş adım ve stop kullanılır. Hepsi `config.yaml` içinde.
 
 ## Mac'te kurulum
 
@@ -52,6 +75,7 @@ Her yeni terminalde önce `cd kripto-bot && source .venv/bin/activate`.
 
 ```bash
 python -m bot check        # coinler BtcTurk'te var mı, fiyatlar, en düşük emir tutarı
+python -m bot scan         # tarama: bugünkü izleme listesi ve elenme sebepleri
 python -m bot backtest     # son 1 yıl geçmiş test (tüm coinler)
 python -m bot backtest --days 180 --coins BTC,ETH
 python -m bot run          # SANAL modda çalıştır (gerçek emir yok) — Ctrl+C ile durdur
@@ -63,10 +87,14 @@ Günlükler `logs/bot.log`, durum `state/paper.json` (canlıda `state/live.json`
 ### Önerilen sıra
 
 1. `check` → listede **BORSADA YOK** yazan coin'i `config.yaml`'dan çıkar.
-2. `backtest` → sonuçları "Al-tut%" sütunuyla karşılaştır. Ayarları değiştirip tekrar dene.
+2. `scan` → seçilen coinlere bak; çok az coin seçiliyorsa filtreleri gevşet
+   (ör. `min_volume_try`), istemediğin coini `blacklist`'e yaz.
+3. `backtest` → sonuçları "Al-tut%" sütunuyla karşılaştır. Ayarları değiştirip tekrar dene.
    Aynı veride çok ayar deneyip en iyisini seçmek geleceği garanti etmez (aşırı uyum).
-3. `run` → en az **2–4 hafta sanal modda** çalıştır, `status` ile izle.
-4. Canlıya geçiş (aşağıda) — önce `total_budget`'ı küçük tut (ör. 5.000 TL, 2–3 coin).
+   Tarama modunda test, **bugün** seçilen coinlerle yapılır; bu coinler son dönemde
+   iyi gittiği için seçildiğinden sonuç olduğundan iyimser çıkar.
+4. `run` → en az **2–4 hafta sanal modda** çalıştır, `status` ile izle.
+5. Canlıya geçiş (aşağıda) — önce `total_budget`'ı küçük tut (ör. 5.000 TL, 2–3 coin).
 
 ## Canlı mod (gerçek para)
 
@@ -129,7 +157,8 @@ python -m pytest -q
 | Dosya | Görevi |
 |---|---|
 | `bot/strategy.py` | Al/sat kararları (borsadan bağımsız) |
-| `bot/engine.py` | Ana döngü, bütçe kontrolü, durum kaydı |
+| `bot/engine.py` | Ana döngü, izleme listesi, bütçe kontrolü, durum kaydı |
+| `bot/scanner.py` | TL paritelerini tarama, eleme ve puanlama |
 | `bot/exchange.py` | BtcTurk bağlantısı, sanal ve gerçek emir |
 | `bot/backtest.py` | Geçmiş test (canlıyla aynı kodu kullanır) |
 | `bot/config.py` | `config.yaml` okuma ve doğrulama |

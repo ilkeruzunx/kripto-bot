@@ -147,11 +147,40 @@ def test_stop_loss_disabled():
 # --- config ---
 
 def test_repo_config_is_valid_and_within_budget():
+    from bot.config import planned_spend
+
     c = load_config("config.yaml")
     assert c.mode == "paper"
-    assert sum(s.max_spend() for s in c.strategies.values()) <= c.total_budget
-    assert c.strategies["TRUMP"].stop_loss_pct == 18
-    assert c.strategies["BTC"].stop_loss_pct == 12
+    assert planned_spend(c) <= c.total_budget
+    assert c.strategy_for("TRUMP").stop_loss_pct == 18
+    assert c.strategy_for("BTC").stop_loss_pct == 12
+    assert c.strategy_for("HERHANGI").stop_loss_pct == 12  # taramadan gelen coin varsayılanı alır
+
+
+def test_scan_mode_budget_uses_max_open_positions():
+    raw = {"coins": ["BTC"], "total_budget": 10000, "selection": {"mode": "scan"},
+           "strategy": {"base_order": 1000, "safety_orders": 0}}
+    assert parse_config({**raw, "max_open_positions": 10}).max_open_positions == 10
+    with pytest.raises(ConfigError, match="yetmiyor"):
+        parse_config({**raw, "max_open_positions": 11})
+    # scan modunda listede olmayan coin için override serbest
+    parse_config({**raw, "max_open_positions": 5, "overrides": {"PEPE": {"stop_loss_pct": 20}}})
+
+
+def test_fixed_mode_max_open_limits_budget_need():
+    raw = {"coins": ["A", "B", "C"], "total_budget": 2000, "strategy": {"base_order": 1000, "safety_orders": 0}}
+    with pytest.raises(ConfigError):
+        parse_config(raw)
+    assert parse_config({**raw, "max_open_positions": 2}).max_open_positions == 2
+
+
+def test_selection_validation():
+    with pytest.raises(ConfigError):
+        parse_config({"coins": ["BTC"], "total_budget": 1e6, "selection": {"mode": "auto"}})
+    with pytest.raises(ConfigError, match="bilinmeyen"):
+        parse_config({"coins": ["BTC"], "total_budget": 1e6, "selection": {"min_volum_try": 1}})
+    c = parse_config({"coins": ["BTC"], "total_budget": 1e6, "selection": {"mode": "scan", "blacklist": ["pepe"]}})
+    assert c.excluded("PEPE") and c.excluded("USDT") and not c.excluded("BTC")
 
 
 def test_config_rejects_over_budget():

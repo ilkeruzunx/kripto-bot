@@ -55,12 +55,20 @@ class MarketData:
         tickers = self.client.fetch_tickers(symbols)
         return {s: float(t["last"]) for s, t in tickers.items() if s in symbols and t.get("last")}
 
-    def closes(self, symbol: str, timeframe: str, n: int) -> list[float]:
-        # ccxt'nin BtcTurk kodu 'since' verilmezse başlangıcı hatalı hesaplıyor; açıkça veriyoruz.
+    def all_tickers(self) -> dict[str, dict]:
+        return self.client.fetch_tickers()
+
+    def active_symbols(self) -> set[str]:
+        return {s for s, m in self.markets.items() if m.get("active") is not False}
+
+    def ohlcv(self, symbol: str, timeframe: str, n: int) -> list[list[float]]:
+        """Son n mum. ccxt'nin BtcTurk kodu 'since' verilmezse başlangıcı hatalı hesaplıyor; açıkça veriyoruz."""
         tf_ms = self.client.parse_timeframe(timeframe) * 1000
         since = self.client.milliseconds() - (n + 1) * tf_ms
-        candles = self.client.fetch_ohlcv(symbol, timeframe, since=since, limit=n + 2)
-        return [float(c[4]) for c in candles][-n:]
+        return self.client.fetch_ohlcv(symbol, timeframe, since=since, limit=n + 2)[-n:]
+
+    def closes(self, symbol: str, timeframe: str, n: int) -> list[float]:
+        return [float(c[4]) for c in self.ohlcv(symbol, timeframe, n)]
 
     def min_cost(self, symbol: str) -> float:
         limits = self.markets[symbol].get("limits") or {}

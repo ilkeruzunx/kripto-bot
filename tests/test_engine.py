@@ -63,7 +63,7 @@ def test_full_cycle_buy_safety_take_profit(tmp_path):
     e.tick()
     pos = e.states["BTC"].position
     assert pos.buys == 1 and pos.cost == pytest.approx(100)
-    assert "ETH" in e.states and e.states["ETH"].position is None  # fiyatı yok, atlandı
+    assert e.states.get("ETH") is None or e.states["ETH"].position is None  # fiyatı yok, atlandı
 
     m.p["BTC/TRY"] = 95.0
     e.tick()
@@ -176,7 +176,7 @@ def test_backtest_on_synthetic_waves():
     r = simulate(cfg, "BTC", candles)
     assert r.trades > 5
     assert r.pnl > 0
-    assert r.budget == cfg.strategies["BTC"].max_spend()
+    assert r.budget == cfg.strategy_for("BTC").max_spend()
 
 
 def test_backtest_crash_hits_stop_loss():
@@ -276,3 +276,66 @@ def test_all_safety_orders_fill_when_budget_is_exact():
         e.tick()
     assert e.states["BTC"].position.buys == 4
     assert b.cash == pytest.approx(0, abs=0.01)
+
+
+# --- izleme listesi / tarama ---
+
+def scan_cfg(**extra):
+    raw = {"coins": ["BTC"], "total_budget": 400, "fee_pct": 0.2, "max_open_positions": 2,
+           "selection": {"mode": "scan", "max_coins": 3},
+           "strategy": dict(rsi_below=None, trend_ema=None, trailing_pct=0, base_order=100,
+                            safety_orders=1, safety_order=100, cooldown_after_tp_min=0)}
+    raw.update(extra)
+    return parse_config(raw)
+
+
+def test_engine_uses_scanned_watchlist_and_respects_max_open(tmp_path):
+    cfg = scan_cfg()
+    m = FakeMarket({"BTC/TRY": 100.0, "AAA/TRY": 10.0, "BBB/TRY": 5.0})
+    e, _, _ = make_engine(tmp_path, cfg, m)
+    e.scanner = lambda: ["BTC", "AAA", "BBB"]
+    e.tick()
+    opened = [c for c, s in e.states.items() if s.position]
+    assert e.watchlist == ["BTC", "AAA", "BBB"]
+    assert len(opened) == 2  # max_open_positions
+    assert any("İzleme listesi" in m for m in e.notifier.msgs)
+
+
+def test_coin_dropped_from_watchlist_keeps_managing_position(tmp_path):
+    cfg = scan_cfg()
+    m = FakeMarket({"BTC/TRY": 100.0, "AAA/TRY": 10.0})
+    e, _, clock = make_engine(tmp_path, cfg, m)
+    e.scanner = lambda: ["BTC", "AAA"]
+    e.tick()
+    assert e.states["AAA"].position
+    # yeni taramada AAA listeden düştü
+    e.scanner = lambda: ["BTC"]
+    clock.t += 25 * 3600
+    m.p["AAA/TRY"] = 9.5  # ek alım seviyesi: listeden düşse de mevcut pozisyon yönetilir
+    e.tick()
+    assert e.watchlist == ["BTC"]
+    assert e.states["AAA"].position.buys == 2
+    m.p["AAA/TRY"] = 20.0  # kar al
+    e.tick()
+    assert e.states["AAA"].position is None and e.states["AAA"].wins == 1
+    e.tick()  # listede olmadığı için yeniden açılmaz
+    assert e.states["AAA"].position is None
+
+
+def test_scanner_failure_keeps_old_watchlist(tmp_path):
+    cfg = scan_cfg()
+    e, _, clock = make_engine(tmp_path, cfg, FakeMarket({"BTC/TRY": 100.0}))
+
+    def boom():
+        raise ccxt.NetworkError("x")
+
+    e.scanner = boom
+    e.tick()
+    assert e.watchlist == ["BTC"] and e.states["BTC"].position
+    calls = []
+    e.scanner = lambda: calls.append(1) or ["BTC"]
+    e.tick()
+    assert calls == []  # 30 dk dolmadan tekrar denemez
+    clock.t += 1801
+    e.tick()
+    assert calls == [1]

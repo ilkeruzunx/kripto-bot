@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 
 CANDLE_REFRESH_SECONDS = 300
 HISTORY_LIMIT = 200
+SCAN_RETRY_SECONDS = 1800
 
 
 class Engine:
@@ -28,6 +29,7 @@ class Engine:
         store: StateStore,
         notifier: Notifier,
         clock: Callable[[], float] = time.time,
+        scanner: Callable[[], list[str]] | None = None,
     ):
         self.cfg = cfg
         self.market = market
@@ -35,12 +37,12 @@ class Engine:
         self.store = store
         self.notifier = notifier
         self.clock = clock
-        self.strategies = {c: Strategy(cfg.strategies[c], cfg.fee) for c in cfg.coins}
+        self.scanner = scanner
+        self.watchlist: list[str] = list(cfg.coins)
+        self._next_scan = 0.0
+        self._strategies: dict[str, Strategy] = {}
         self.states: dict[str, CoinState] = store.load()
         self._candles: dict[str, tuple[float, list[float]]] = {}
-
-        for coin in cfg.coins:
-            self.states.setdefault(coin, CoinState())
         for coin, st in self.states.items():
             if st.pending_order and not st.blocked:
                 st.blocked = (
@@ -53,15 +55,50 @@ class Engine:
 
     # --- yardımcılar ---
 
+    def strategy(self, coin: str) -> Strategy:
+        if coin not in self._strategies:
+            self._strategies[coin] = Strategy(self.cfg.strategy_for(coin), self.cfg.fee)
+        return self._strategies[coin]
+
     def invested(self) -> float:
         return sum(s.position.cost for s in self.states.values() if s.position)
+
+    def open_positions(self) -> int:
+        return sum(1 for s in self.states.values() if s.position)
+
+    def active_coins(self) -> list[str]:
+        """İzleme listesi + listeden düşmüş ama hâlâ pozisyonu ya da sorunu olan coinler."""
+        held = [c for c, s in self.states.items() if s.position or s.blocked or s.pending_order]
+        return list(dict.fromkeys(self.watchlist + held))
+
+    def refresh_watchlist(self) -> None:
+        now = self.clock()
+        if self.scanner is None or now < self._next_scan:
+            return
+        try:
+            new = self.scanner()
+        except Exception as e:
+            log.warning("Tarama başarısız, eski liste kullanılıyor: %s", e)
+            self._next_scan = now + SCAN_RETRY_SECONDS
+            return
+        self._next_scan = now + self.cfg.selection.rescan_hours * 3600
+        added = [c for c in new if c not in self.watchlist]
+        removed = [c for c in self.watchlist if c not in new]
+        self.watchlist = new
+        if added or removed:
+            msg = f"🔎 İzleme listesi: {', '.join(new)}"
+            if added:
+                msg += f"\nEklenen: {', '.join(added)}"
+            if removed:
+                msg += f"\nÇıkan: {', '.join(removed)} (açık pozisyon varsa kendi kuralıyla kapanır)"
+            self.notifier.send(msg)
 
     def _closes(self, coin: str) -> list[float]:
         now = self.clock()
         cached = self._candles.get(coin)
         if cached and now - cached[0] < CANDLE_REFRESH_SECONDS:
             return cached[1]
-        s = self.cfg.strategies[coin]
+        s = self.cfg.strategy_for(coin)
         closes = self.market.closes(self.cfg.symbol(coin), s.timeframe, s.candles_needed())
         self._candles[coin] = (now, closes)
         return closes
@@ -73,9 +110,10 @@ class Engine:
     # --- döngü ---
 
     def tick(self) -> None:
-        symbols = [self.cfg.symbol(c) for c in self.cfg.coins]
-        prices = self.market.prices(symbols)
-        for coin in self.cfg.coins:
+        self.refresh_watchlist()
+        coins = self.active_coins()
+        prices = self.market.prices([self.cfg.symbol(c) for c in coins])
+        for coin in coins:
             price = prices.get(self.cfg.symbol(coin))
             if not price:
                 log.debug("%s fiyatı yok, atlanıyor", coin)
@@ -88,10 +126,12 @@ class Engine:
                 self.store.save(self.states)
 
     def _tick_coin(self, coin: str, price: float) -> None:
-        st = self.states[coin]
+        st = self.states.setdefault(coin, CoinState())
+        if st.position is None and (coin not in self.watchlist or self.open_positions() >= self.cfg.max_open_positions):
+            return  # yeni pozisyon açılmayacak
         needs_candles = st.position is None and not st.blocked and self.clock() >= st.cooldown_until
         closes = self._closes(coin) if needs_candles else []
-        decision = self.strategies[coin].decide(st, price, closes, self.clock())
+        decision = self.strategy(coin).decide(st, price, closes, self.clock())
         log.debug("%s %.6g -> %s (%s)", coin, price, decision.action.value, decision.reason)
         if decision.action in (Action.BUY_BASE, Action.BUY_SAFETY):
             self._buy(coin, st, price, decision)
@@ -147,7 +187,7 @@ class Engine:
             st.closed_trades += 1
             st.wins += int(pnl > 0)
             st.position = None
-            st.cooldown_until = self.clock() + self.strategies[coin].cooldown_for(d.action)
+            st.cooldown_until = self.clock() + self.strategy(coin).cooldown_for(d.action)
         icon = "✅" if d.action == Action.SELL_TP else "🛑"
         status = "Pozisyon kapandı." if dust else f"Kısmi satış, kalan {pos.qty:.8g}."
         self.notifier.send(
@@ -175,7 +215,8 @@ class Engine:
 
     def run_forever(self) -> None:
         self.notifier.send(
-            f"🤖 Bot başladı ({self.cfg.mode}) — {len(self.cfg.coins)} coin, bütçe {self.cfg.total_budget:,.0f} TL"
+            f"🤖 Bot başladı ({self.cfg.mode}, seçim: {self.cfg.selection.mode}) — en fazla "
+            f"{self.cfg.max_open_positions} açık pozisyon, bütçe {self.cfg.total_budget:,.0f} TL"
         )
         while True:
             try:

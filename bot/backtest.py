@@ -96,9 +96,12 @@ class Result:
 
 
 def simulate(cfg: Config, coin: str, candles: list[list[float]], slippage: float = 0.001) -> Result:
-    s = cfg.strategies[coin]
+    s = cfg.strategy_for(coin)
     budget = s.max_spend()
-    one = replace(cfg, coins=[coin], strategies={coin: s}, total_budget=budget, mode="paper")
+    one = replace(
+        cfg, coins=[coin], default_strategy=s, overrides={}, total_budget=budget, mode="paper",
+        max_open_positions=1, selection=replace(cfg.selection, mode="fixed"),
+    )
     symbol = one.symbol(coin)
     market = _ReplayMarket(symbol, candles)
     broker = PaperBroker(budget, one.fee, slippage)

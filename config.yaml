@@ -18,7 +18,27 @@ fee_pct: 0.2
 # Ana döngü: fiyatlar kaç saniyede bir kontrol edilsin
 poll_seconds: 60
 
-coins: [BTC, ETH, ETC, XRP, SOL, TRUMP, ZRO, ENA, LAYER, SPK]
+# Coin seçimi
+#   fixed: yalnız "coins" listesinde işlem yapar.
+#   scan:  "coins" listesi HEP izlenir; bot ayrıca tüm TL paritelerini tarar,
+#          kurallara uyanları puanlar ve kalan yerleri en iyilerle doldurur.
+#          Komut: python -m bot scan  (hangi coinlerin neden seçildiğini gösterir)
+coins: [BTC, ETH, SOL, XRP]
+
+selection:
+  mode: scan
+  max_coins: 12              # izleme listesinin toplam büyüklüğü (coins dahil)
+  rescan_hours: 24           # tarama kaç saatte bir yenilensin
+  min_volume_try: 20000000   # 24 saatlik hacim en az 20 milyon TL
+  max_spread_pct: 0.3        # alış-satış farkı en fazla %0,3
+  min_age_days: 30           # en az 30 gündür listede
+  min_volatility_pct: 1.5    # günlük ortalama hareket en az %1,5 (durgun coin kar getirmez)
+  max_volatility_pct: 8      # en fazla %8 (aşırı oynak coin stop'a takılır)
+  require_trend: true        # fiyat 50 günlük ortalamanın üstünde olmalı
+  blacklist: []              # asla işlem yapılmayacak coinler, ör. [PEPE, SHIB]
+
+# Aynı anda en fazla kaç coinde pozisyon açık olsun
+max_open_positions: 10
 
 # Varsayılan strateji (her coin için geçerli; aşağıda coin bazında değiştirilebilir)
 strategy:
@@ -46,7 +66,8 @@ strategy:
   cooldown_after_tp_min: 60
   cooldown_after_sl_min: 1440
 
-# Coin bazında değişiklikler (yalnız değiştirmek istediğin alanları yaz)
+# Coin bazında değişiklikler (yalnız değiştirmek istediğin alanları yaz).
+# Tarama bu coinleri seçerse bu ayarlar kullanılır.
 overrides:
   # Oynak coinlerde daha geniş adım ve stop
   TRUMP: { safety_step_pct: 6, stop_loss_pct: 18, take_profit_pct: 4 }

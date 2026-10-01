@@ -11,7 +11,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .config import Config, ConfigError, load_config
+from .config import Config, ConfigError, load_config, planned_spend
 from .exchange import LiveBroker, MarketData, PaperBroker, make_client
 from .notify import Notifier
 from .state import StateStore
@@ -59,7 +59,11 @@ def cmd_check(cfg: Config, _args) -> int:
     market = MarketData(client)
     prices = market.prices([cfg.symbol(c) for c in cfg.coins if market.has_symbol(cfg.symbol(c))])
     ok = True
-    print(f"Mod: {cfg.mode} | Toplam bütçe: {cfg.total_budget:,.0f} TL | Komisyon: %{cfg.fee_pct}\n")
+    print(f"Mod: {cfg.mode} | Toplam bütçe: {cfg.total_budget:,.0f} TL | Komisyon: %{cfg.fee_pct}")
+    if cfg.scanning:
+        print(f"Seçim: tarama — aşağıdaki coinler hep izlenir, kalan yerler (toplam {cfg.selection.max_coins}) "
+              "taramayla dolar. Taramayı görmek için: python -m bot scan")
+    print(f"En fazla açık pozisyon: {cfg.max_open_positions}\n")
     print(f"{'Coin':<7}{'Parite':<12}{'Fiyat':>14}{'Min emir TL':>13}{'En fazla TL':>13}")
     for coin in cfg.coins:
         sym = cfg.symbol(coin)
@@ -67,13 +71,15 @@ def cmd_check(cfg: Config, _args) -> int:
             print(f"{coin:<7}{sym:<12}{'BORSADA YOK':>14}")
             ok = False
             continue
-        s = cfg.strategies[coin]
+        s = cfg.strategy_for(coin)
         min_cost = market.min_cost(sym)
         warn = "  ⚠ ilk alım min tutarın altında" if s.base_order < min_cost else ""
         print(f"{coin:<7}{sym:<12}{prices.get(sym, 0):>14.6g}{min_cost:>13,.2f}{s.max_spend():>13,.0f}{warn}")
         ok &= not warn
-    planned = sum(s.max_spend() for s in cfg.strategies.values())
-    print(f"\nTüm kademeler dolarsa kullanılacak: {planned:,.0f} TL")
+    min_any = max((market.min_cost(cfg.symbol(c)) for c in cfg.coins if market.has_symbol(cfg.symbol(c))), default=0)
+    if cfg.scanning and cfg.default_strategy.base_order < min_any:
+        print("⚠ Varsayılan ilk alım tutarı bazı coinlerin en düşük emir tutarının altında.")
+    print(f"\nAçık pozisyonların tüm kademeleri dolarsa kullanılacak: {planned_spend(cfg):,.0f} TL")
 
     if key and secret:
         try:
@@ -92,18 +98,28 @@ def cmd_backtest(cfg: Config, args) -> int:
 
     client = make_client(cfg)
     market = MarketData(client)
-    coins = [c.strip().upper() for c in args.coins.split(",")] if args.coins else cfg.coins
+    if args.coins:
+        coins = [c.strip().upper() for c in args.coins.split(",")]
+    elif cfg.scanning:
+        from .scanner import scan
+
+        print("Tarama yapılıyor...", flush=True)
+        coins = scan(cfg, market).selected
+        print(
+            f"Bugünkü izleme listesi test ediliyor: {', '.join(coins)}\n"
+            "Not: bu coinler BUGÜN iyi göründüğü için seçildi; geçmişte hep böyle değildi. "
+            "Sonuçlar gerçekte olacağından iyimser çıkar.\n"
+        )
+    else:
+        coins = cfg.coins
     results = []
     for coin in coins:
-        if coin not in cfg.strategies:
-            print(f"{coin} config.yaml içinde yok, atlanıyor")
-            continue
         sym = cfg.symbol(coin)
         if not market.has_symbol(sym):
             print(f"{sym} borsada yok, atlanıyor")
             continue
         print(f"{sym} verisi hazırlanıyor ({args.days} gün)...", flush=True)
-        candles = load_ohlcv(client, sym, cfg.strategies[coin].timeframe, args.days, ROOT / "data")
+        candles = load_ohlcv(client, sym, cfg.strategy_for(coin).timeframe, args.days, ROOT / "data")
         if not candles:
             print(f"{sym} için veri yok")
             continue
@@ -138,11 +154,29 @@ def cmd_run(cfg: Config, args) -> int:
     if missing:
         print(f"Borsada olmayan coin(ler): {', '.join(missing)}. config.yaml'dan çıkar.")
         return 2
-    engine = Engine(cfg, market, broker, store, Notifier(cfg.telegram))
+    scanner = None
+    if cfg.scanning:
+        from .scanner import scan
+
+        def scanner() -> list[str]:
+            return scan(cfg, market).selected
+
+    engine = Engine(cfg, market, broker, store, Notifier(cfg.telegram), scanner=scanner)
     try:
         engine.run_forever()
     except KeyboardInterrupt:
         print("\nDurduruldu.")
+    return 0
+
+
+def cmd_scan(cfg: Config, args) -> int:
+    from .scanner import format_scan, scan
+
+    market = MarketData(make_client(cfg))
+    print("Tüm TL pariteleri taranıyor (1-2 dakika sürebilir)...\n", flush=True)
+    print(format_scan(scan(cfg, market), limit=args.limit))
+    if not cfg.scanning:
+        print("\nNot: config.yaml'da selection.mode 'fixed'; bot bu listeyi kullanmaz, yalnız 'coins' listesini kullanır.")
     return 0
 
 
@@ -215,6 +249,8 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--coins", help="virgülle ayrılmış, ör. BTC,ETH (varsayılan: hepsi)")
     r = sub.add_parser("run", help="botu çalıştır (varsayılan sanal mod)")
     r.add_argument("--canli", action="store_true", help="GERÇEK emir gönder (config'te mode: live da gerekli)")
+    sc = sub.add_parser("scan", help="tüm TL paritelerini tara, izleme listesini göster")
+    sc.add_argument("--limit", type=int, default=25, help="kaç satır gösterilsin")
     sub.add_parser("status", help="pozisyonları ve kar/zararı göster")
     u = sub.add_parser("unblock", help="durdurulmuş bir coin'i elle kontrol sonrası aç")
     u.add_argument("coin")
@@ -229,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         setup_logging(args.verbose)
     else:
         logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)
-    handler = {"check": cmd_check, "backtest": cmd_backtest, "run": cmd_run, "status": cmd_status, "unblock": cmd_unblock}
+    handler = {"check": cmd_check, "backtest": cmd_backtest, "run": cmd_run, "scan": cmd_scan, "status": cmd_status, "unblock": cmd_unblock}
     return handler[args.cmd](cfg, args)
 
 

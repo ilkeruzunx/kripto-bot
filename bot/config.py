@@ -67,6 +67,40 @@ class OrderConfig:
     timeout_seconds: int = 30
 
 
+STABLECOINS = ("USDT", "USDC", "DAI", "FDUSD", "TUSD", "BUSD", "USDP", "PYUSD", "EUR", "GBP", "TRY")
+
+
+@dataclass(frozen=True)
+class SelectionConfig:
+    """Hangi coinlerde işlem yapılacağı.
+
+    fixed: yalnız `coins` listesi.
+    scan:  `coins` her zaman izlenir; bot ayrıca tüm TL paritelerini tarar ve
+           en iyi puanlıları ekler (toplam `max_coins` olana kadar).
+    """
+
+    mode: str = "fixed"
+    max_coins: int = 12
+    rescan_hours: float = 24
+    min_volume_try: float = 20_000_000
+    max_spread_pct: float = 0.3
+    min_age_days: int = 30
+    min_volatility_pct: float = 1.5
+    max_volatility_pct: float = 12
+    require_trend: bool = True
+    blacklist: tuple[str, ...] = ()
+
+    def validate(self) -> None:
+        if self.mode not in ("fixed", "scan"):
+            raise ConfigError("selection.mode 'fixed' ya da 'scan' olmalı")
+        if self.max_coins < 1:
+            raise ConfigError("selection.max_coins >= 1 olmalı")
+        if not 0 <= self.min_volatility_pct < self.max_volatility_pct:
+            raise ConfigError("selection: min_volatility_pct < max_volatility_pct olmalı")
+        if self.min_age_days < 1 or self.rescan_hours <= 0:
+            raise ConfigError("selection: min_age_days >= 1 ve rescan_hours > 0 olmalı")
+
+
 @dataclass(frozen=True)
 class Config:
     mode: str
@@ -75,8 +109,11 @@ class Config:
     total_budget: float
     fee_pct: float
     poll_seconds: int
-    coins: list[str]
-    strategies: dict[str, StrategyConfig]
+    coins: list[str]                      # sabit liste (scan modunda: hep izlenenler)
+    default_strategy: StrategyConfig
+    overrides: dict[str, StrategyConfig]  # coin bazında strateji
+    max_open_positions: int
+    selection: SelectionConfig = field(default_factory=SelectionConfig)
     orders: OrderConfig = field(default_factory=OrderConfig)
     telegram: bool = False
 
@@ -84,8 +121,18 @@ class Config:
     def fee(self) -> float:
         return self.fee_pct / 100
 
+    @property
+    def scanning(self) -> bool:
+        return self.selection.mode == "scan"
+
     def symbol(self, coin: str) -> str:
         return f"{coin}/{self.quote}"
+
+    def strategy_for(self, coin: str) -> StrategyConfig:
+        return self.overrides.get(coin, self.default_strategy)
+
+    def excluded(self, coin: str) -> bool:
+        return coin in self.selection.blacklist or coin in STABLECOINS
 
 
 def _pick(cls: type, raw: dict[str, Any], where: str) -> dict[str, Any]:
@@ -101,39 +148,46 @@ def parse_config(raw: dict[str, Any]) -> Config:
     if mode not in ("paper", "live"):
         raise ConfigError("mode 'paper' ya da 'live' olmalı")
 
+    sel_raw = dict(_pick(SelectionConfig, raw.get("selection") or {}, "selection"))
+    sel_raw["blacklist"] = tuple(str(c).upper() for c in sel_raw.get("blacklist") or ())
+    selection = SelectionConfig(**sel_raw)
+    selection.validate()
+
     coins = [str(c).upper() for c in raw.get("coins") or []]
-    if not coins:
+    if not coins and selection.mode == "fixed":
         raise ConfigError("coins listesi boş")
     if len(set(coins)) != len(coins):
         raise ConfigError("coins listesinde tekrar eden coin var")
+    if selection.mode == "scan" and len(coins) > selection.max_coins:
+        raise ConfigError("coins listesi selection.max_coins'ten uzun olamaz")
 
     base = StrategyConfig(**_pick(StrategyConfig, raw.get("strategy") or {}, "strategy"))
-    overrides = {str(k).upper(): v for k, v in (raw.get("overrides") or {}).items()}
-    stray = set(overrides) - set(coins)
-    if stray:
-        raise ConfigError(f"overrides içinde coins listesinde olmayan coin var: {', '.join(sorted(stray))}")
-
-    strategies: dict[str, StrategyConfig] = {}
-    for coin in coins:
-        s = replace(base, **_pick(StrategyConfig, overrides.get(coin) or {}, f"overrides.{coin}"))
+    base.validate("strategy")
+    overrides: dict[str, StrategyConfig] = {}
+    for k, v in (raw.get("overrides") or {}).items():
+        coin = str(k).upper()
+        s = replace(base, **_pick(StrategyConfig, v or {}, f"overrides.{coin}"))
         s.validate(coin)
-        strategies[coin] = s
+        overrides[coin] = s
+    if selection.mode == "fixed":
+        stray = set(overrides) - set(coins)
+        if stray:
+            raise ConfigError(f"overrides içinde coins listesinde olmayan coin var: {', '.join(sorted(stray))}")
 
     total_budget = float(raw.get("total_budget", 0))
     if total_budget <= 0:
         raise ConfigError("total_budget > 0 olmalı")
-    planned = sum(s.max_spend() for s in strategies.values())
-    if planned > total_budget + 1e-6:
-        raise ConfigError(
-            f"Tüm kademeler dolarsa {planned:,.0f} TL gerekir; total_budget ({total_budget:,.0f} TL) yetmiyor. "
-            "base_order / safety_order değerlerini düşür ya da coin sayısını azalt."
-        )
+
+    default_open = len(coins) if selection.mode == "fixed" else selection.max_coins
+    max_open = int(raw.get("max_open_positions") or default_open)
+    if max_open < 1:
+        raise ConfigError("max_open_positions >= 1 olmalı")
 
     fee_pct = float(raw.get("fee_pct", 0.2))
     if not 0 <= fee_pct < 5:
         raise ConfigError("fee_pct 0-5 arası olmalı")
 
-    return Config(
+    cfg = Config(
         mode=mode,
         exchange=str(raw.get("exchange", "btcturk")),
         quote=str(raw.get("quote", "TRY")).upper(),
@@ -141,10 +195,29 @@ def parse_config(raw: dict[str, Any]) -> Config:
         fee_pct=fee_pct,
         poll_seconds=int(raw.get("poll_seconds", 60)),
         coins=coins,
-        strategies=strategies,
+        default_strategy=base,
+        overrides=overrides,
+        max_open_positions=max_open,
+        selection=selection,
         orders=OrderConfig(**_pick(OrderConfig, raw.get("orders") or {}, "orders")),
         telegram=bool(raw.get("telegram", False)),
     )
+    planned = planned_spend(cfg)
+    if planned > total_budget + 1e-6:
+        raise ConfigError(
+            f"Açık pozisyonların tüm kademeleri dolarsa {planned:,.0f} TL gerekir; total_budget "
+            f"({total_budget:,.0f} TL) yetmiyor. base_order / safety_order ya da max_open_positions değerini düşür."
+        )
+    return cfg
+
+
+def planned_spend(cfg: Config) -> float:
+    """Açık pozisyon sınırı dolup tüm kademeler alınırsa kullanılacak en fazla TL."""
+    if cfg.scanning:
+        biggest = max([cfg.default_strategy.max_spend()] + [s.max_spend() for s in cfg.overrides.values()])
+        return biggest * cfg.max_open_positions
+    spends = sorted((cfg.strategy_for(c).max_spend() for c in cfg.coins), reverse=True)
+    return sum(spends[: cfg.max_open_positions])
 
 
 def load_config(path: str | Path = "config.yaml") -> Config:
