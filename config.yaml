@@ -35,7 +35,7 @@ selection:
   min_volatility_pct: 1.5    # günlük ortalama hareket en az %1,5 (durgun coin kar getirmez)
   max_volatility_pct: 8      # en fazla %8 (aşırı oynak coin stop'a takılır)
   require_trend: true        # fiyat 50 günlük ortalamanın üstünde olmalı
-  blacklist: []              # asla işlem yapılmayacak coinler, ör. [PEPE, SHIB]
+  blacklist: [STX, ENA]      # asla işlem yapılmayacak coinler, ör. [PEPE, SHIB]
 
 # Aynı anda en fazla kaç coinde pozisyon açık olsun
 max_open_positions: 10
@@ -58,7 +58,7 @@ strategy:
   safety_step_scale: 1.0   # adımlar büyüsün mü (1.0 = hep aynı)
 
   # --- Çıkış ---
-  take_profit_pct: 3       # komisyonlar DÜŞÜLDÜKTEN sonraki net kar hedefi
+  take_profit_pct: 5       # komisyonlar DÜŞÜLDÜKTEN sonraki net kar hedefi
   trailing_pct: 1.0        # hedefe ulaşınca zirveden bu kadar düşerse sat (0 = hemen sat)
   stop_loss_pct: 12        # ortalama maliyetin bu kadar altında zararı kes (null = kapalı)
 
@@ -70,11 +70,10 @@ strategy:
 # Tarama bu coinleri seçerse bu ayarlar kullanılır.
 overrides:
   # Oynak coinlerde daha geniş adım ve stop
-  TRUMP: { safety_step_pct: 6, stop_loss_pct: 18, take_profit_pct: 4 }
-  LAYER: { safety_step_pct: 6, stop_loss_pct: 18, take_profit_pct: 4 }
-  SPK:   { safety_step_pct: 6, stop_loss_pct: 18, take_profit_pct: 4 }
+  TRUMP: { safety_step_pct: 6, stop_loss_pct: 18, take_profit_pct: 6 }
+  LAYER: { safety_step_pct: 6, stop_loss_pct: 18, take_profit_pct: 6 }
+  SPK:   { safety_step_pct: 6, stop_loss_pct: 18, take_profit_pct: 6 }
   ZRO:   { safety_step_pct: 5, stop_loss_pct: 15 }
-  ENA:   { safety_step_pct: 5, stop_loss_pct: 15 }
 
 # Emir ayarları (yalnız canlı modda)
 orders:

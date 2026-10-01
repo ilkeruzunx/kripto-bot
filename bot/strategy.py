@@ -82,9 +82,10 @@ class Strategy:
         return pos.avg_cost * (1 + self.cfg.take_profit_pct / 100) / (1 - self.fee)
 
     def stop_price(self, pos: Position) -> float | None:
+        """Satış komisyonu düştükten sonra net zarar stop_loss_pct'i aşmasın diye fiyat eşiği."""
         if self.cfg.stop_loss_pct is None:
             return None
-        return pos.avg_cost * (1 - self.cfg.stop_loss_pct / 100)
+        return pos.avg_cost * (1 - self.cfg.stop_loss_pct / 100) / (1 - self.fee)
 
     def next_safety_price(self, pos: Position) -> float | None:
         idx = pos.buys - 1

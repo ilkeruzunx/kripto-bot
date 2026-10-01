@@ -135,8 +135,17 @@ def test_trailing_sells_if_price_falls_back_below_target():
 def test_stop_loss():
     s = Strategy(cfg(stop_loss_pct=10, safety_orders=0), FEE)
     st = open_state(qty=1, cost=100)
-    assert s.decide(st, 90.01, [], 0).action == Action.HOLD
-    assert s.decide(st, 90, [], 0).action == Action.SELL_SL
+    stop = s.stop_price(st.position)
+    assert s.decide(st, stop + 0.01, [], 0).action == Action.HOLD
+    assert s.decide(st, stop, [], 0).action == Action.SELL_SL
+
+
+def test_stop_loss_is_net_of_fees():
+    s = Strategy(cfg(stop_loss_pct=10, safety_orders=0), FEE)
+    st = open_state(qty=1, cost=100)
+    stop = s.stop_price(st.position)
+    proceeds = stop * (1 - FEE)
+    assert 100 - proceeds == pytest.approx(10)
 
 
 def test_stop_loss_disabled():

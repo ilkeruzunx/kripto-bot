@@ -38,10 +38,10 @@ Her coin için ayrı ayrı:
 2. **Ek alımlar** — fiyat son alımdan `safety_step_pct` (%4) düşerse
    `safety_order` kadar daha alır. Her ek alım bir öncekinin 1.3 katı; en fazla 3 kez.
    Böylece ortalama maliyet düşer.
-3. **Kar al** — fiyat, komisyonlar düştükten sonra `take_profit_pct` (%3) net kar
+3. **Kar al** — fiyat, komisyonlar düştükten sonra `take_profit_pct` (%5) net kar
    bırakacak seviyeyi geçince takibe başlar. Zirveden `trailing_pct` (%1) düşünce satar.
-4. **Zarar durdur** — fiyat ortalama maliyetin `stop_loss_pct` (%12) altına inerse
-   hepsini satar ve 24 saat o coin'e girmez.
+4. **Zarar durdur** — fiyat düşüp, komisyonlar düşüldükten sonraki net zarar
+   `stop_loss_pct` (%12) seviyesine ulaşınca hepsini satar ve 24 saat o coin'e girmez.
 
 Varsayılan ayarlarla her coin'e en fazla 1000 + 1000 + 1300 + 1690 = **4.990 TL**,
 en fazla 10 açık pozisyonla toplam **49.900 TL** gider. Bot `total_budget` (50.000 TL)
