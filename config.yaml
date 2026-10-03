@@ -27,7 +27,7 @@ coins: [BTC, ETH, SOL, XRP]
 
 selection:
   mode: scan
-  max_coins: 12              # izleme listesinin toplam büyüklüğü (coins dahil)
+  max_coins: 18              # izleme listesinin toplam büyüklüğü (coins dahil)
   rescan_hours: 24           # tarama kaç saatte bir yenilensin
   min_volume_try: 20000000   # 24 saatlik hacim en az 20 milyon TL
   max_spread_pct: 0.3        # alış-satış farkı en fazla %0,3
@@ -54,7 +54,7 @@ strategy:
   safety_orders: 3         # en fazla kaç ek alım
   safety_order: 800        # ilk ek alım (TL)
   safety_volume_scale: 1.3 # her ek alım bir öncekinin kaç katı
-  safety_step_pct: 4       # son alımdan bu kadar düşünce ek alım yap
+  safety_step_pct: 2.5       # son alımdan bu kadar düşünce ek alım yap
   safety_step_scale: 1.0   # adımlar büyüsün mü (1.0 = hep aynı)
 
   # --- Çıkış ---
