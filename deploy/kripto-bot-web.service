@@ -1,0 +1,18 @@
+[Unit]
+Description=kripto-bot web paneli (durum/kar-zarar)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bot
+WorkingDirectory=/home/bot/kripto-bot
+# --host 127.0.0.1: panel dışarıya açık değil, sadece sunucunun kendisinden erişilebilir.
+# Mac'ten görmek için SSH port yönlendirmesi kullan (README'deki adımlar).
+ExecStart=/home/bot/kripto-bot/.venv/bin/python -m bot.web_status --port 8787 --host 127.0.0.1
+Restart=on-failure
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
