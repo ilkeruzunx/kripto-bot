@@ -166,15 +166,19 @@ function sectionRow(label) {
 }
 
 function renderRows(allRows) {
-  // Fiyatı gelen (açık pozisyonu olan) coinleri kârdan zarara ayır; fiyatı olmayanlar (bekleyen) en altta.
-  const withPrice = allRows.filter(r => r.price !== null && r.price !== undefined);
-  const waiting = allRows.filter(r => r.price === null || r.price === undefined);
-  const profit = withPrice.filter(r => r.unrealized > 0).sort((a, b) => b.unrealized - a.unrealized);
-  const loss = withPrice.filter(r => r.unrealized <= 0).sort((a, b) => a.unrealized - b.unrealized);
+  // Önce pozisyonu olan/olmayanı ayır (status "bekliyor" ise pozisyon yok demektir).
+  // Pozisyonu olup da fiyat alınamayanlar ("Bekliyor"ya karışmasın) ayrı bir grupta gösterilir.
+  const open = allRows.filter(r => r.status !== "bekliyor");
+  const waiting = allRows.filter(r => r.status === "bekliyor");
+  const openWithPrice = open.filter(r => r.price !== null && r.price !== undefined);
+  const openNoPrice = open.filter(r => r.price === null || r.price === undefined);
+  const profit = openWithPrice.filter(r => r.unrealized > 0).sort((a, b) => b.unrealized - a.unrealized);
+  const loss = openWithPrice.filter(r => r.unrealized <= 0).sort((a, b) => a.unrealized - b.unrealized);
 
   let html = "";
   if (profit.length) html += sectionRow("Kârda") + profit.map(rowHtml).join("");
   if (loss.length) html += sectionRow("Zararda (en çoktan en aza)") + loss.map(rowHtml).join("");
+  if (openNoPrice.length) html += sectionRow("Açık — fiyat alınamadı") + openNoPrice.map(rowHtml).join("");
   if (waiting.length) html += sectionRow("Bekliyor") + waiting.map(rowHtml).join("");
   return html;
 }
