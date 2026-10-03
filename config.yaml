@@ -23,7 +23,7 @@ poll_seconds: 60
 #   scan:  "coins" listesi HEP izlenir; bot ayrıca tüm TL paritelerini tarar,
 #          kurallara uyanları puanlar ve kalan yerleri en iyilerle doldurur.
 #          Komut: python -m bot scan  (hangi coinlerin neden seçildiğini gösterir)
-coins: [BTC, ETH, SOL, XRP]
+coins: [BTC, ETH, SOL, XRP, ETC, TRUMP, GRAM, ATM, APE, LAYER, SPK, PEPE]
 
 selection:
   mode: scan
@@ -35,7 +35,7 @@ selection:
   min_volatility_pct: 1.5    # günlük ortalama hareket en az %1,5 (durgun coin kar getirmez)
   max_volatility_pct: 8      # en fazla %8 (aşırı oynak coin stop'a takılır)
   require_trend: true        # fiyat 50 günlük ortalamanın üstünde olmalı
-  blacklist: [STX, ENA]      # asla işlem yapılmayacak coinler, ör. [PEPE, SHIB]
+  blacklist: [STX]      # asla işlem yapılmayacak coinler, ör. [PEPE, SHIB]
 
 # Aynı anda en fazla kaç coinde pozisyon açık olsun
 max_open_positions: 12
