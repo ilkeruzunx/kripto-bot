@@ -147,6 +147,19 @@ IP kısıtlamasını sunucunun IP'si ile güncelle.
 Mac'ten sunucuya geçerken `state/` klasörünü de kopyala (açık pozisyonlar orada).
 **Aynı anda iki yerde canlı bot çalıştırma.**
 
+## Canlı durum paneli (tarayıcı)
+
+Panel sunucuda `127.0.0.1:8787` adresinde çalışır, dışarıya açık değildir.
+Mac'ten görmek için:
+
+1. SSH tüneli aç:
+   ```bash
+   ssh -L 8787:127.0.0.1:8787 bot@<sunucu-ip>
+   ```
+2. Tünel açık kaldığı sürece tarayıcında şunu aç:
+   `http://localhost:8787/?key=<web/.token dosyasının içeriği>`
+   (token'ı görmek için sunucuda: `cat /home/bot/kripto-bot/web/.token`)
+
 ## Geliştirme
 
 ```bash
