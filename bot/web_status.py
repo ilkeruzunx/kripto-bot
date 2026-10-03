@@ -77,12 +77,17 @@ INDEX_HTML_TEMPLATE = """<!doctype html>
   tr.blocked { color: #ff5f56; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: #262a33; }
   .err { color: #ff5f56; font-size: 13px; margin-bottom: 12px; }
+  tr.section td { padding-top: 18px; padding-bottom: 6px; color: #6b7076; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: none; }
+  tr.section:first-child td { padding-top: 8px; }
   @media (max-width: 600px) {
     table, thead, tbody, th, td, tr { display: block; }
     thead { display: none; }
     tr { background: #1a1d24; border-radius: 10px; margin-bottom: 10px; padding: 10px; }
     td { border: none; display: flex; justify-content: space-between; padding: 4px 0; }
     td::before { content: attr(data-label); color: #9aa0a6; }
+    tr.section { background: none; padding: 0; margin: 14px 0 4px; }
+    tr.section td { display: block; padding: 0; }
+    tr.section:first-child { margin-top: 4px; }
   }
 </style>
 </head>
@@ -138,10 +143,13 @@ function render(data) {
     <div class="card"><div class="label">Toplam</div><div class="value ${pnlClass(data.total_pnl)}">${data.total_pnl>=0?"+":""}${totalStr} TL</div></div>
   `;
 
-  const rows = data.rows.map(r => {
-    const cls = r.blocked ? "blocked" : (r.status === "bekliyor" ? "waiting" : "");
-    const pct = r.unrealized_pct === null || r.unrealized_pct === undefined ? "" : ` (${r.unrealized_pct>=0?"+":""}${fmt(r.unrealized_pct,1)}%)`;
-    return `<tr class="${cls}">
+  document.getElementById("rows").innerHTML = renderRows(data.rows);
+}
+
+function rowHtml(r) {
+  const cls = r.blocked ? "blocked" : (r.status === "bekliyor" ? "waiting" : "");
+  const pct = r.unrealized_pct === null || r.unrealized_pct === undefined ? "" : ` (${r.unrealized_pct>=0?"+":""}${fmt(r.unrealized_pct,1)}%)`;
+  return `<tr class="${cls}">
       <td data-label="Coin"><b>${r.coin}</b></td>
       <td data-label="Durum"><span class="badge">${r.blocked ? "durduruldu" : r.status}</span></td>
       <td data-label="Miktar">${r.qty ? fmt(r.qty, 6) : "-"}</td>
@@ -151,8 +159,24 @@ function render(data) {
       <td class="${pnlClass(r.unrealized)}" data-label="Anlık K/Z">${r.price ? (r.unrealized>=0?"+":"") + fmt(r.unrealized) + " TL" + pct : "-"}</td>
       <td class="${pnlClass(r.realized_pnl)}" data-label="Gerçekleşen">${r.realized_pnl ? (r.realized_pnl>=0?"+":"") + fmt(r.realized_pnl) + " TL" : "-"}</td>
     </tr>`;
-  }).join("");
-  document.getElementById("rows").innerHTML = rows;
+}
+
+function sectionRow(label) {
+  return `<tr class="section"><td colspan="8">${label}</td></tr>`;
+}
+
+function renderRows(allRows) {
+  // Fiyatı gelen (açık pozisyonu olan) coinleri kârdan zarara ayır; fiyatı olmayanlar (bekleyen) en altta.
+  const withPrice = allRows.filter(r => r.price !== null && r.price !== undefined);
+  const waiting = allRows.filter(r => r.price === null || r.price === undefined);
+  const profit = withPrice.filter(r => r.unrealized > 0).sort((a, b) => b.unrealized - a.unrealized);
+  const loss = withPrice.filter(r => r.unrealized <= 0).sort((a, b) => a.unrealized - b.unrealized);
+
+  let html = "";
+  if (profit.length) html += sectionRow("Kârda") + profit.map(rowHtml).join("");
+  if (loss.length) html += sectionRow("Zararda (en çoktan en aza)") + loss.map(rowHtml).join("");
+  if (waiting.length) html += sectionRow("Bekliyor") + waiting.map(rowHtml).join("");
+  return html;
 }
 
 refresh();
