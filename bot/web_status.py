@@ -77,6 +77,11 @@ INDEX_HTML_TEMPLATE = """<!doctype html>
   tr.blocked { color: #ff5f56; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: #262a33; }
   .err { color: #ff5f56; font-size: 13px; margin-bottom: 12px; }
+  .market { border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; background: #1a1d24; border-left: 4px solid #3ddc84; }
+  .market.riskli { border-left-color: #ffbd2e; }
+  .market.devre_kesici { border-left-color: #ff5f56; }
+  .market b { margin-right: 6px; }
+  .market .why { color: #9aa0a6; }
   tr.section td { padding-top: 18px; padding-bottom: 6px; color: #6b7076; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: none; }
   tr.section:first-child td { padding-top: 8px; }
   @media (max-width: 600px) {
@@ -95,6 +100,7 @@ INDEX_HTML_TEMPLATE = """<!doctype html>
   <h1>Kripto Bot &mdash; Durum</h1>
   <div class="sub" id="meta">Yükleniyor&hellip;</div>
   <div id="err"></div>
+  <div id="market"></div>
   <div class="summary" id="summary"></div>
   <table>
     <thead>
@@ -135,6 +141,8 @@ function render(data) {
     errEl.className = "";
   }
 
+  renderMarket(data.market);
+
   const totalStr = fmt(data.total_pnl);
   document.getElementById("summary").innerHTML = `
     <div class="card"><div class="label">Açık pozisyonlarda</div><div class="value">${fmt(data.invested)} TL</div></div>
@@ -144,6 +152,16 @@ function render(data) {
   `;
 
   document.getElementById("rows").innerHTML = renderRows(data.rows);
+}
+
+const MARKET_LABELS = {normal: "Piyasa: normal", riskli: "Piyasa: RİSKLİ — yeni alım yok", devre_kesici: "DEVRE KESİCİ AKTİF — alım yok"};
+function esc(t) { return String(t).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c])); }
+function renderMarket(m) {
+  const el = document.getElementById("market");
+  if (!m) { el.innerHTML = `<div class="market"><b>Piyasa durumu bilinmiyor</b><span class="why">bot henüz çalışmadı</span></div>`; return; }
+  const when = m.ts ? new Date(m.ts * 1000).toLocaleTimeString("tr-TR") : "";
+  el.innerHTML = `<div class="market ${esc(m.state)}"><b>${esc(MARKET_LABELS[m.state] || m.state)}</b>`
+    + `<span class="why">${esc(m.reason || "")}${when ? " · " + when : ""}</span></div>`;
 }
 
 function rowHtml(r) {
@@ -265,6 +283,7 @@ def collect_status_safe(cfg: Config) -> dict:
             "realized_pnl": 0.0,
             "total_pnl": 0.0,
             "budget": cfg.total_budget,
+            "market": None,
             "updated_at": time.time(),
         }
 

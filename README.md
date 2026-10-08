@@ -48,6 +48,29 @@ en fazla 10 açık pozisyonla toplam **49.900 TL** gider. Bot `total_budget` (50
 sınırını asla aşmaz. Oynak coinler (TRUMP, LAYER, SPK, ZRO, ENA) taramayla seçilirse
 onlar için daha geniş adım ve stop kullanılır. Hepsi `config.yaml` içinde.
 
+`max_open_positions: auto` yazılırsa pozisyon sınırı `total_budget / coin başı en fazla harcama`
+(aşağı yuvarlanır) olur; ör. 2.000 TL'lik alımlarla (en fazla 9.980 TL/coin) 50.000 TL'de 5, 100.000 TL'de 10.
+Bot açılışta pozisyon sınırını ve en kötü durum harcamasını günlüğe yazar.
+
+### 3. Ek filtreler ve korumalar (hepsi isteğe bağlı, varsayılan kapalı)
+
+Hepsi `config.yaml`'da `entry_filter` ve `protection` altında tek tek açılıp kapatılır.
+Hepsi kapalıyken bot yukarıdaki kurallarla aynen çalışır.
+
+- **Çoklu zaman dilimi giriş filtresi** (yalnız ilk alımı etkiler, yalnız kapanmış mumlar):
+  4 saatlikte EMA20 > EMA50; 1 saatlikte fiyat > EMA50 ve RSI < 50; 15 dakikalıkta RSI
+  son birkaç mumda 35 altına inmiş ve yukarı dönüyor.
+- **BTC rejimi**: BTC 4 saatlik EMA50 altındaysa ya da 24 saatte %4'ten fazla düştüyse piyasa
+  "riskli" sayılır ve yeni pozisyon açılmaz; istenirse ek alımlar da durur.
+- **Toplam risk sınırı**: pozisyonlara bağlı para bütçenin %X'ini geçmez; tüm ek alımlarını
+  yapmış pozisyon sayısı sınırlanır.
+- **Devre kesici**: toplam K/Z (gerçekleşen + anlık) 24 saatte bütçenin %X'inden fazla düşerse
+  24 saat hiç alım yapılmaz; açık pozisyonlar satılmaz, Telegram'a bildirilir.
+
+Kar al, takip eden stop ve zarar durdur her koşulda çalışır. Piyasa durumu (normal / riskli /
+devre kesici) ve sebebi `status` çıktısında ve panelde görünür; her alım bildiriminde hangi
+kuralın geçtiği (✓) ya da takıldığı (✗) yazar.
+
 ## Mac'te kurulum
 
 Terminal'i aç:
@@ -79,7 +102,9 @@ python -m bot scan         # tarama: bugünkü izleme listesi ve elenme sebepler
 python -m bot backtest     # son 1 yıl geçmiş test (tüm coinler)
 python -m bot backtest --days 180 --coins BTC,ETH
 python -m bot run          # SANAL modda çalıştır (gerçek emir yok) — Ctrl+C ile durdur
-python -m bot status       # pozisyonlar ve kar/zarar
+python -m bot status       # piyasa durumu, pozisyonlar ve kar/zarar
+python -m bot scenarios    # ayar senaryolarını (A..I) tek bütçeli portföy olarak karşılaştır
+python -m bot scenarios --only A,G --offline   # yalnız bu senaryolar, data/ içindeki veriyle
 ```
 
 Günlükler `logs/bot.log`, durum `state/paper.json` (canlıda `state/live.json`).
@@ -173,5 +198,6 @@ python -m pytest -q
 | `bot/engine.py` | Ana döngü, izleme listesi, bütçe kontrolü, durum kaydı |
 | `bot/scanner.py` | TL paritelerini tarama, eleme ve puanlama |
 | `bot/exchange.py` | BtcTurk bağlantısı, sanal ve gerçek emir |
-| `bot/backtest.py` | Geçmiş test (canlıyla aynı kodu kullanır) |
+| `bot/backtest.py` | Geçmiş test, coin başı ve portföy (canlıyla aynı kodu kullanır) |
+| `bot/scenarios.py` | Ayar senaryolarının karşılaştırması |
 | `bot/config.py` | `config.yaml` okuma ve doğrulama |

@@ -63,7 +63,7 @@ def cmd_check(cfg: Config, _args) -> int:
     if cfg.scanning:
         print(f"Seçim: tarama — aşağıdaki coinler hep izlenir, kalan yerler (toplam {cfg.selection.max_coins}) "
               "taramayla dolar. Taramayı görmek için: python -m bot scan")
-    print(f"En fazla açık pozisyon: {cfg.max_open_positions}\n")
+    print(f"En fazla açık pozisyon: {cfg.max_open_positions}{' (auto)' if cfg.max_open_auto else ''}\n")
     print(f"{'Coin':<7}{'Parite':<12}{'Fiyat':>14}{'Min emir TL':>13}{'En fazla TL':>13}")
     for coin in cfg.coins:
         sym = cfg.symbol(coin)
@@ -119,13 +119,32 @@ def cmd_backtest(cfg: Config, args) -> int:
             print(f"{sym} borsada yok, atlanıyor")
             continue
         print(f"{sym} verisi hazırlanıyor ({args.days} gün)...", flush=True)
-        candles = load_ohlcv(client, sym, cfg.strategy_for(coin).timeframe, args.days, ROOT / "data")
+        tf = cfg.strategy_for(coin).timeframe
+        candles = load_ohlcv(client, sym, tf, args.days, ROOT / "data")
         if not candles:
             print(f"{sym} için veri yok")
             continue
-        results.append(simulate(cfg, coin, candles))
+        extra = {}
+        need = {(sym, t) for t in cfg.entry_filter.candles_needed()}
+        if cfg.protection.btc_regime:
+            regime = cfg.symbol(cfg.protection.regime_coin)
+            need |= {(regime, cfg.protection.regime_tf), (regime, "1h"), (regime, tf)}
+        for key in need - {(sym, tf)}:
+            extra[key] = load_ohlcv(client, key[0], key[1], args.days, ROOT / "data")
+        results.append(simulate(cfg, coin, candles, extra=extra))
     print()
     print(format_results(results))
+    return 0
+
+
+def cmd_scenarios(cfg: Config, args) -> int:
+    from .scenarios import DEFAULT_COINS, run_scenarios
+
+    coins = [c.strip().upper() for c in args.coins.split(",")] if args.coins else DEFAULT_COINS
+    client = None if args.offline else make_client(cfg)
+    only = [k.strip().upper() for k in args.only.split(",")] if args.only else None
+    print(run_scenarios(args.config, client, coins, args.days, ROOT / "data", only,
+                        log=lambda m: print(m, flush=True)))
     return 0
 
 
@@ -180,13 +199,27 @@ def cmd_scan(cfg: Config, args) -> int:
     return 0
 
 
+MARKET_LABELS = {"normal": "normal", "riskli": "RİSKLİ", "devre_kesici": "DEVRE KESİCİ AKTİF"}
+
+
+def market_line(meta: dict) -> str:
+    m = meta.get("market")
+    if not m:
+        return "Piyasa durumu: bilinmiyor (bot henüz çalışmadı)"
+    t = datetime.fromtimestamp(m.get("ts", 0)).strftime("%Y-%m-%d %H:%M")
+    reason = f" — {m['reason']}" if m.get("reason") else ""
+    return f"Piyasa durumu: {MARKET_LABELS.get(m.get('state'), m.get('state'))}{reason} (güncelleme {t})"
+
+
 def cmd_status(cfg: Config, _args) -> int:
-    states = StateStore(state_path(cfg)).load()
+    store = StateStore(state_path(cfg))
+    states = store.load()
     if not states:
         print(f"Kayıt yok ({state_path(cfg)}).")
         return 0
     total_pnl = invested = 0.0
-    print(f"Mod: {cfg.mode}\n")
+    print(f"Mod: {cfg.mode}")
+    print(market_line(store.load_meta()) + "\n")
     print(f"{'Coin':<7}{'Durum':<16}{'Miktar':>16}{'Ort. maliyet':>14}{'Yatırılan TL':>14}{'Kapanan':>9}{'Gerçekleşen TL':>16}")
     for coin, st in states.items():
         pos = st.position
@@ -247,6 +280,11 @@ def main(argv: list[str] | None = None) -> int:
     b = sub.add_parser("backtest", help="geçmiş veriyle test")
     b.add_argument("--days", type=int, default=365)
     b.add_argument("--coins", help="virgülle ayrılmış, ör. BTC,ETH (varsayılan: hepsi)")
+    sn = sub.add_parser("scenarios", help="ayar senaryolarını (A..I) portföy olarak geçmiş veriyle karşılaştır")
+    sn.add_argument("--days", type=int, default=365)
+    sn.add_argument("--coins", help="virgülle ayrılmış (varsayılan: 15 coinlik test listesi)")
+    sn.add_argument("--only", help="yalnız bu senaryolar, ör. A,G")
+    sn.add_argument("--offline", action="store_true", help="indirme yapma, data/ içindeki veriyi kullan")
     r = sub.add_parser("run", help="botu çalıştır (varsayılan sanal mod)")
     r.add_argument("--canli", action="store_true", help="GERÇEK emir gönder (config'te mode: live da gerekli)")
     sc = sub.add_parser("scan", help="tüm TL paritelerini tara, izleme listesini göster")
@@ -265,7 +303,8 @@ def main(argv: list[str] | None = None) -> int:
         setup_logging(args.verbose)
     else:
         logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)
-    handler = {"check": cmd_check, "backtest": cmd_backtest, "run": cmd_run, "scan": cmd_scan, "status": cmd_status, "unblock": cmd_unblock}
+    handler = {"check": cmd_check, "backtest": cmd_backtest, "run": cmd_run, "scan": cmd_scan, "status": cmd_status, "unblock": cmd_unblock,
+               "scenarios": cmd_scenarios}
     return handler[args.cmd](cfg, args)
 
 

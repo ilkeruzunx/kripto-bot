@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,118 @@ class OrderConfig:
     timeout_seconds: int = 30
 
 
+TIMEFRAME_UNITS = {"m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def timeframe_seconds(tf: str) -> int:
+    """'15m' -> 900, '4h' -> 14400."""
+    try:
+        return int(tf[:-1]) * TIMEFRAME_UNITS[tf[-1]]
+    except (KeyError, ValueError, IndexError):
+        raise ConfigError(f"geçersiz mum aralığı: {tf!r} (ör. 15m, 1h, 4h)") from None
+
+
+@dataclass(frozen=True)
+class EntryFilterConfig:
+    """Çoklu zaman dilimi giriş filtresi. Yalnız yeni pozisyon açmayı (ilk alım) etkiler.
+
+    Her kural ayrı açılıp kapatılır; hepsi kapalıyken bot eskisi gibi davranır.
+    Yalnız kapanmış mumlar kullanılır.
+    """
+
+    rsi_period: int = 14
+    # 1) Büyük resim: trend_tf mumlarında EMA(trend_fast_ema) > EMA(trend_slow_ema)
+    trend: bool = False
+    trend_tf: str = "4h"
+    trend_fast_ema: int = 20
+    trend_slow_ema: int = 50
+    # 2) Onay: confirm_tf mumlarında fiyat > EMA(confirm_ema) ve RSI < confirm_rsi_below
+    confirm: bool = False
+    confirm_tf: str = "1h"
+    confirm_ema: int = 50
+    confirm_rsi_below: float = 50
+    # 3) Tetik: trigger_tf'de RSI son trigger_lookback mum içinde trigger_rsi_below altına inmiş
+    #    ve son mumun RSI'ı bir öncekinden yüksek (dipten dönüş)
+    trigger: bool = False
+    trigger_tf: str = "15m"
+    trigger_rsi_below: float = 35
+    trigger_lookback: int = 6
+
+    @property
+    def active(self) -> bool:
+        return self.trend or self.confirm or self.trigger
+
+    def candles_needed(self) -> dict[str, int]:
+        """Her zaman dilimi için gereken kapanmış mum sayısı."""
+        need: dict[str, int] = {}
+
+        def add(tf: str, n: int) -> None:
+            need[tf] = max(need.get(tf, 0), n)
+
+        rsi_need = (self.rsi_period + 1) * 3
+        if self.trend:
+            add(self.trend_tf, self.trend_slow_ema * 3)
+        if self.confirm:
+            add(self.confirm_tf, max(self.confirm_ema * 3, rsi_need))
+        if self.trigger:
+            add(self.trigger_tf, rsi_need + self.trigger_lookback)
+        return need
+
+    def validate(self) -> None:
+        for tf in (self.trend_tf, self.confirm_tf, self.trigger_tf):
+            timeframe_seconds(tf)
+        if self.rsi_period < 2:
+            raise ConfigError("entry_filter.rsi_period >= 2 olmalı")
+        if not 2 <= self.trend_fast_ema < self.trend_slow_ema:
+            raise ConfigError("entry_filter: 2 <= trend_fast_ema < trend_slow_ema olmalı")
+        if self.confirm_ema < 2:
+            raise ConfigError("entry_filter.confirm_ema >= 2 olmalı")
+        if not (0 < self.confirm_rsi_below < 100 and 0 < self.trigger_rsi_below < 100):
+            raise ConfigError("entry_filter: RSI eşikleri 0-100 arası olmalı")
+        if self.trigger_lookback < 2:
+            raise ConfigError("entry_filter.trigger_lookback >= 2 olmalı")
+
+
+@dataclass(frozen=True)
+class ProtectionConfig:
+    """Sert düşüş korumaları. Kar al, takip eden stop ve zarar durdur bunlardan hiç etkilenmez.
+
+    Yüzdeler bütçeye (total_budget) oranlıdır; bütçe büyüyünce sınırlar da büyür.
+    """
+
+    # 4) BTC rejim filtresi: regime_tf mumlarında BTC < EMA(regime_ema) ya da 24 saatte
+    #    regime_drop_24h_pct'ten fazla düşüş => piyasa riskli, yeni pozisyon açılmaz
+    btc_regime: bool = False
+    regime_coin: str = "BTC"
+    regime_tf: str = "4h"
+    regime_ema: int = 50
+    regime_drop_24h_pct: float | None = 4
+    # 5) Piyasa riskliyken ek alım (kademeli alım) da yapılmasın
+    block_safety_when_risky: bool = False
+    # 6) Toplam risk sınırı: açık pozisyonlara bağlı para bütçenin bu %'sini geçmesin (null = kapalı)
+    max_invested_pct: float | None = None
+    #    Tüm ek alımlarını yapmış (dolu) pozisyon sayısı en fazla bu kadar (null = kapalı)
+    max_full_positions: int | None = None
+    # 7) Devre kesici: toplam K/Z (gerçekleşen + anlık) circuit_window_hours içinde bütçenin
+    #    bu %'sinden fazla düşerse circuit_pause_hours boyunca hiç alım yapılmaz (null = kapalı)
+    circuit_breaker_pct: float | None = None
+    circuit_window_hours: float = 24
+    circuit_pause_hours: float = 24
+
+    def validate(self) -> None:
+        timeframe_seconds(self.regime_tf)
+        if self.regime_ema < 2:
+            raise ConfigError("protection.regime_ema >= 2 olmalı")
+        for name in ("regime_drop_24h_pct", "max_invested_pct", "circuit_breaker_pct"):
+            v = getattr(self, name)
+            if v is not None and not 0 < v <= 100:
+                raise ConfigError(f"protection.{name} 0-100 arası olmalı (ya da null)")
+        if self.max_full_positions is not None and self.max_full_positions < 1:
+            raise ConfigError("protection.max_full_positions >= 1 olmalı (ya da null)")
+        if self.circuit_window_hours <= 0 or self.circuit_pause_hours <= 0:
+            raise ConfigError("protection: circuit_window_hours ve circuit_pause_hours > 0 olmalı")
+
+
 STABLECOINS = ("USDT", "USDC", "DAI", "FDUSD", "TUSD", "BUSD", "USDP", "PYUSD", "EUR", "GBP", "TRY")
 
 
@@ -116,6 +229,9 @@ class Config:
     selection: SelectionConfig = field(default_factory=SelectionConfig)
     orders: OrderConfig = field(default_factory=OrderConfig)
     telegram: bool = False
+    entry_filter: EntryFilterConfig = field(default_factory=EntryFilterConfig)
+    protection: ProtectionConfig = field(default_factory=ProtectionConfig)
+    max_open_auto: bool = False  # max_open_positions: auto ile mi hesaplandı
 
     @property
     def fee(self) -> float:
@@ -178,8 +294,18 @@ def parse_config(raw: dict[str, Any]) -> Config:
     if total_budget <= 0:
         raise ConfigError("total_budget > 0 olmalı")
 
+    entry_filter = EntryFilterConfig(**_pick(EntryFilterConfig, raw.get("entry_filter") or {}, "entry_filter"))
+    entry_filter.validate()
+    protection = ProtectionConfig(**_pick(ProtectionConfig, raw.get("protection") or {}, "protection"))
+    protection.validate()
+
     default_open = len(coins) if selection.mode == "fixed" else selection.max_coins
-    max_open = int(raw.get("max_open_positions") or default_open)
+    raw_open = raw.get("max_open_positions")
+    auto_open = isinstance(raw_open, str) and raw_open.strip().lower() == "auto"
+    try:
+        max_open = default_open if auto_open else int(raw_open or default_open)
+    except (TypeError, ValueError):
+        raise ConfigError("max_open_positions bir sayı ya da 'auto' olmalı") from None
     if max_open < 1:
         raise ConfigError("max_open_positions >= 1 olmalı")
 
@@ -201,7 +327,18 @@ def parse_config(raw: dict[str, Any]) -> Config:
         selection=selection,
         orders=OrderConfig(**_pick(OrderConfig, raw.get("orders") or {}, "orders")),
         telegram=bool(raw.get("telegram", False)),
+        entry_filter=entry_filter,
+        protection=protection,
+        max_open_auto=auto_open,
     )
+    if auto_open:
+        max_open = auto_max_open_positions(cfg)
+        if max_open < 1:
+            raise ConfigError(
+                f"max_open_positions: auto — bütçe ({total_budget:,.0f} TL) tek bir coinin en fazla "
+                f"harcamasına ({biggest_max_spend(cfg):,.0f} TL) bile yetmiyor."
+            )
+        cfg = replace(cfg, max_open_positions=max_open)
     planned = planned_spend(cfg)
     if planned > total_budget + 1e-6:
         raise ConfigError(
@@ -211,11 +348,22 @@ def parse_config(raw: dict[str, Any]) -> Config:
     return cfg
 
 
+def biggest_max_spend(cfg: Config) -> float:
+    """Coin başı en fazla harcamanın en büyüğü (tüm kademeler dolarsa)."""
+    if cfg.scanning:
+        return max([cfg.default_strategy.max_spend()] + [s.max_spend() for s in cfg.overrides.values()])
+    return max(cfg.strategy_for(c).max_spend() for c in cfg.coins)
+
+
+def auto_max_open_positions(cfg: Config) -> int:
+    """max_open_positions: auto => floor(total_budget / en büyük coin başı max_spend)."""
+    return math.floor(cfg.total_budget / biggest_max_spend(cfg) + 1e-9)
+
+
 def planned_spend(cfg: Config) -> float:
     """Açık pozisyon sınırı dolup tüm kademeler alınırsa kullanılacak en fazla TL."""
     if cfg.scanning:
-        biggest = max([cfg.default_strategy.max_spend()] + [s.max_spend() for s in cfg.overrides.values()])
-        return biggest * cfg.max_open_positions
+        return biggest_max_spend(cfg) * cfg.max_open_positions
     spends = sorted((cfg.strategy_for(c).max_spend() for c in cfg.coins), reverse=True)
     return sum(spends[: cfg.max_open_positions])
 

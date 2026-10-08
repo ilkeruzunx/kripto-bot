@@ -5,12 +5,12 @@ Canlı bot, sanal bot ve geçmiş test aynı kodu kullanır.
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 
-from .config import StrategyConfig
-from .indicators import ema, rsi
+from .config import EntryFilterConfig, StrategyConfig
+from .indicators import ema, rsi, rsi_series
 
 
 @dataclass
@@ -72,10 +72,69 @@ class Decision:
     reason: str = ""
 
 
+def mark(ok: bool, text: str) -> str:
+    return f"{'✓' if ok else '✗'} {text}"
+
+
+def entry_filter_checks(
+    ef: EntryFilterConfig, price: float, closes_by_tf: Mapping[str, Sequence[float]]
+) -> list[tuple[bool, str]]:
+    """Çoklu zaman dilimi kurallarını tek tek değerlendirir: [(geçti_mi, açıklama), ...].
+
+    closes_by_tf yalnız KAPANMIŞ mumların kapanışlarını içermeli (ileriyi görmemek için).
+    """
+    need = ef.candles_needed()
+    checks: list[tuple[bool, str]] = []
+
+    def enough(tf: str) -> tuple[Sequence[float], str | None]:
+        closes = closes_by_tf.get(tf) or []
+        if len(closes) < need[tf]:
+            return closes, f"{tf} yetersiz mum ({len(closes)}/{need[tf]})"
+        return closes, None
+
+    if ef.trend:
+        closes, short = enough(ef.trend_tf)
+        if short:
+            checks.append((False, f"trend: {short}"))
+        else:
+            fast, slow = ema(closes, ef.trend_fast_ema), ema(closes, ef.trend_slow_ema)
+            ok = fast > slow
+            rel = ">" if ok else "<="
+            checks.append((ok, f"{ef.trend_tf} EMA{ef.trend_fast_ema} {fast:.6g} {rel} EMA{ef.trend_slow_ema} {slow:.6g}"))
+    if ef.confirm:
+        closes, short = enough(ef.confirm_tf)
+        if short:
+            checks.append((False, f"onay: {short}"))
+        else:
+            e = ema(closes, ef.confirm_ema)
+            r = rsi(closes, ef.rsi_period)
+            ok = price > e and r < ef.confirm_rsi_below
+            checks.append((ok, (
+                f"{ef.confirm_tf} fiyat {price:.6g} {'>' if price > e else '<='} EMA{ef.confirm_ema} {e:.6g}, "
+                f"RSI {r:.1f} {'<' if r < ef.confirm_rsi_below else '>='} {ef.confirm_rsi_below:g}"
+            )))
+    if ef.trigger:
+        closes, short = enough(ef.trigger_tf)
+        if short:
+            checks.append((False, f"tetik: {short}"))
+        else:
+            series = rsi_series(closes, ef.rsi_period)
+            low = min(series[-ef.trigger_lookback:])
+            dipped = low < ef.trigger_rsi_below
+            turning = series[-1] > series[-2]
+            checks.append((dipped and turning, (
+                f"{ef.trigger_tf} RSI son {ef.trigger_lookback} mumda en düşük {low:.1f} "
+                f"{'<' if dipped else '>='} {ef.trigger_rsi_below:g}, "
+                f"{'dönüyor' if turning else 'dönmüyor'} ({series[-2]:.1f}→{series[-1]:.1f})"
+            )))
+    return checks
+
+
 class Strategy:
-    def __init__(self, cfg: StrategyConfig, fee: float):
+    def __init__(self, cfg: StrategyConfig, fee: float, entry_filter: EntryFilterConfig | None = None):
         self.cfg = cfg
         self.fee = fee
+        self.entry_filter = entry_filter if entry_filter is not None and entry_filter.active else None
 
     def target_price(self, pos: Position) -> float:
         """Satış komisyonu düştükten sonra net take_profit_pct kar bırakan fiyat."""
@@ -110,8 +169,18 @@ class Strategy:
             parts.append(f"RSI {r:.1f}<{c.rsi_below}")
         return True, ", ".join(parts) or "koşulsuz giriş"
 
-    def decide(self, state: CoinState, price: float, closes: Sequence[float], now: float) -> Decision:
-        """Ne yapılacağına karar verir. Takip eden stop için position.trailing_peak'i günceller."""
+    def decide(
+        self,
+        state: CoinState,
+        price: float,
+        closes: Sequence[float],
+        now: float,
+        closes_by_tf: Mapping[str, Sequence[float]] | None = None,
+    ) -> Decision:
+        """Ne yapılacağına karar verir. Takip eden stop için position.trailing_peak'i günceller.
+
+        closes_by_tf: giriş filtresi açıksa her zaman dilimi için kapanmış mum kapanışları.
+        """
         if state.blocked:
             return Decision(Action.HOLD, reason=f"durduruldu: {state.blocked}")
 
@@ -120,6 +189,10 @@ class Strategy:
             if now < state.cooldown_until:
                 return Decision(Action.HOLD, reason="bekleme süresinde")
             ok, why = self.entry_signal(closes)
+            if self.entry_filter is not None:
+                checks = [(ok, why)] + entry_filter_checks(self.entry_filter, price, closes_by_tf or {})
+                ok = all(c[0] for c in checks)
+                why = " | ".join(mark(*c) for c in checks)
             if ok:
                 return Decision(Action.BUY_BASE, self.cfg.base_order, why)
             return Decision(Action.HOLD, reason=why)

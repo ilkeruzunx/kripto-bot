@@ -17,7 +17,9 @@ def collect_status(
     keys: tuple[str | None, str | None] = (None, None),
     market: MarketData | None = None,
 ) -> dict:
-    states = StateStore(path).load()
+    store = StateStore(path)
+    states = store.load()
+    meta = store.load_meta()
 
     open_symbols = [cfg.symbol(c) for c, st in states.items() if st.position]
     prices: dict[str, float] = {}
@@ -67,4 +69,6 @@ def collect_status(
         "realized_pnl": realized_total,
         "total_pnl": unrealized_total + realized_total,
         "budget": cfg.total_budget,
+        # Botun son turda yazdığı piyasa durumu: normal / riskli / devre_kesici ve sebebi
+        "market": meta.get("market"),
     }

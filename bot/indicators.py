@@ -16,18 +16,30 @@ def ema(values: Sequence[float], period: int) -> float | None:
 
 def rsi(values: Sequence[float], period: int = 14) -> float | None:
     """Wilder RSI; yeterli veri yoksa None."""
+    series = rsi_series(values, period)
+    return series[-1] if series else None
+
+
+def rsi_series(values: Sequence[float], period: int = 14) -> list[float]:
+    """Her mum için Wilder RSI (values[period:] ile hizalı); yeterli veri yoksa boş liste."""
     if len(values) < period + 1:
-        return None
+        return []
     gains = losses = 0.0
     for i in range(1, period + 1):
         d = values[i] - values[i - 1]
         gains += max(d, 0)
         losses += max(-d, 0)
     avg_gain, avg_loss = gains / period, losses / period
+    out = [_rsi_value(avg_gain, avg_loss)]
     for i in range(period + 1, len(values)):
         d = values[i] - values[i - 1]
         avg_gain = (avg_gain * (period - 1) + max(d, 0)) / period
         avg_loss = (avg_loss * (period - 1) + max(-d, 0)) / period
+        out.append(_rsi_value(avg_gain, avg_loss))
+    return out
+
+
+def _rsi_value(avg_gain: float, avg_loss: float) -> float:
     if avg_loss == 0:
         return 100.0 if avg_gain > 0 else 50.0
     return 100 - 100 / (1 + avg_gain / avg_loss)

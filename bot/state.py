@@ -13,16 +13,25 @@ class StateStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
 
-    def load(self) -> dict[str, CoinState]:
+    def _raw(self) -> dict:
         if not self.path.exists():
             return {}
         with open(self.path, encoding="utf-8") as f:
-            raw = json.load(f)
-        return {coin: CoinState.from_dict(d) for coin, d in raw.get("coins", {}).items()}
+            return json.load(f)
 
-    def save(self, states: dict[str, CoinState]) -> None:
+    def load(self) -> dict[str, CoinState]:
+        return {coin: CoinState.from_dict(d) for coin, d in self._raw().get("coins", {}).items()}
+
+    def load_meta(self) -> dict:
+        """Coinlere bağlı olmayan durum: piyasa durumu, devre kesici, K/Z geçmişi."""
+        return self._raw().get("meta", {})
+
+    def save(self, states: dict[str, CoinState], meta: dict | None = None) -> None:
+        """meta verilmezse dosyadaki mevcut meta korunur."""
+        if meta is None:
+            meta = self.load_meta()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        data = {"coins": {coin: s.to_dict() for coin, s in states.items()}}
+        data = {"coins": {coin: s.to_dict() for coin, s in states.items()}, "meta": meta}
         # Önce geçici dosyaya yaz, sonra yer değiştir: yarım kalan yazma durumu bozmasın.
         fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".state-")
         try:
