@@ -23,7 +23,7 @@ poll_seconds: 60
 #   scan:  "coins" listesi HEP izlenir; bot ayrıca tüm TL paritelerini tarar,
 #          kurallara uyanları puanlar ve kalan yerleri en iyilerle doldurur.
 #          Komut: python -m bot scan  (hangi coinlerin neden seçildiğini gösterir)
-coins: [BTC, ETH, SOL, XRP, ETC, TRUMP, GRAM, ATM, APE, LAYER, SPK, PEPE]
+coins: [BTC, ETH, SOL, XRP, ETC, TRUMP, GRAM, ATM, LAYER, SPK]
 
 selection:
   mode: scan
@@ -35,9 +35,11 @@ selection:
   min_volatility_pct: 1.5    # günlük ortalama hareket en az %1,5 (durgun coin kar getirmez)
   max_volatility_pct: 8      # en fazla %8 (aşırı oynak coin stop'a takılır)
   require_trend: true        # fiyat 50 günlük ortalamanın üstünde olmalı
-  blacklist: [STX]      # asla işlem yapılmayacak coinler, ör. [PEPE, SHIB]
+  blacklist: [STX, APE, PEPE]   # asla işlem yapılmayacak coinler, ör. [PEPE, SHIB]
 
-# Aynı anda en fazla kaç coinde pozisyon açık olsun
+# Aynı anda en fazla kaç coinde pozisyon açık olsun.
+#   auto: total_budget / (coin başı en fazla harcama) aşağı yuvarlanır; bütçe artınca kendiliğinden artar.
+#   Elle sayı yazılırsa o kullanılır ama tüm kademeler dolunca bütçe aşılıyorsa bot başlamaz.
 max_open_positions: 12
 
 # Varsayılan strateji (her coin için geçerli; aşağıda coin bazında değiştirilebilir)
@@ -54,7 +56,7 @@ strategy:
   safety_orders: 3         # en fazla kaç ek alım
   safety_order: 800        # ilk ek alım (TL)
   safety_volume_scale: 1.3 # her ek alım bir öncekinin kaç katı
-  safety_step_pct: 2.5       # son alımdan bu kadar düşünce ek alım yap
+  safety_step_pct: 4       # son alımdan bu kadar düşünce ek alım yap
   safety_step_scale: 1.0   # adımlar büyüsün mü (1.0 = hep aynı)
 
   # --- Çıkış ---
@@ -74,6 +76,31 @@ overrides:
   LAYER: { safety_step_pct: 6, stop_loss_pct: 18, take_profit_pct: 6 }
   SPK:   { safety_step_pct: 6, stop_loss_pct: 18, take_profit_pct: 6 }
   ZRO:   { safety_step_pct: 5, stop_loss_pct: 15 }
+
+# Çoklu zaman dilimi giriş filtresi: yalnız YENİ pozisyon açmayı (ilk alım) etkiler.
+# Her kural ayrı açılıp kapatılır; hepsi false iken bot eskisi gibi davranır. Yalnız kapanmış mumlar kullanılır.
+entry_filter:
+  trend: true              # 1) 4 saatlik mumlarda EMA20 > EMA50
+  confirm: true            # 2) 1 saatlik mumlarda fiyat > EMA50 ve RSI(14) < 50
+  trigger: true            # 3) 15 dakikalık RSI(14) son 6 mumda 35 altına inmiş ve yukarı dönüyor
+  # İnce ayar (varsayılanlar):
+  # rsi_period: 14
+  # trend_tf: 4h,  trend_fast_ema: 20, trend_slow_ema: 50
+  # confirm_tf: 1h, confirm_ema: 50,  confirm_rsi_below: 50
+  # trigger_tf: 15m, trigger_rsi_below: 35, trigger_lookback: 6
+
+# Sert düşüş korumaları. Kar al, takip eden stop ve zarar durdur bunlardan HİÇ etkilenmez.
+# Yüzdeler bütçeye oranlıdır; total_budget artınca sınırlar da büyür. null = kapalı.
+protection:
+  btc_regime: true               # 4) BTC 4s EMA50 altında ya da 24 saatte %4'ten fazla düştüyse "riskli": yeni pozisyon yok
+  # regime_ema: 50
+  # regime_drop_24h_pct: 4       # null = yalnız EMA şartı
+  block_safety_when_risky: true  # 5) riskliyken ek alımlar da yapılmasın
+  max_invested_pct: 50           # 6) açık pozisyonlara bağlı para bütçenin en fazla %'si (ör. 50)
+  max_full_positions: 4          #    tüm ek alımlarını yapmış pozisyon sayısı en fazla (ör. 4)
+  circuit_breaker_pct: 3         # 7) toplam K/Z son 24 saatte bütçenin bu %'sinden fazla düşerse (ör. 3)
+  # circuit_window_hours: 24     #    24 saat hiç alım yapılmaz (açık pozisyonlar satılmaz), Telegram'a bildirilir
+  # circuit_pause_hours: 24
 
 # Emir ayarları (yalnız canlı modda)
 orders:
